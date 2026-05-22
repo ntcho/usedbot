@@ -18,12 +18,12 @@
 - [x] 3.1 Inspect the upstream repository default branch before assuming `main`.
 - [x] 3.2 Add the `upstream` remote as `https://github.com/twbeatles/used-market-notifier` if it does not already exist.
 - [x] 3.3 Fetch the `upstream` remote.
-- [ ] 3.4 Add the upstream project under `vendor/used-market-notifier/` using `git subtree add --prefix=vendor/used-market-notifier upstream <branch> --squash`.
+- [x] 3.4 Add the upstream project under `vendor/used-market-notifier/` using `git subtree add --prefix=vendor/used-market-notifier upstream <branch> --squash`.
 
 ## 4. Verify Guardrails
 
-- [ ] 4.1 Verify required root files exist: `migration.md`, `package.json`, `pnpm-workspace.yaml`, `.gitignore`, `docs/upstream-sync.md`, `docs/upstream-patches.md`, and `scripts/sync-upstream.sh`.
-- [ ] 4.2 Verify `vendor/used-market-notifier/` contains upstream scraper files and tests.
-- [ ] 4.3 Verify forbidden legacy app files do not exist at the active root outside `vendor/used-market-notifier/`.
-- [ ] 4.4 Verify v2 frontend files and directories, including `apps/web/` and SolidJS setup files, do not exist.
-- [ ] 4.5 Run `openspec status --change bootstrap-v1-workspace` and confirm the change remains apply-ready.
+- [x] 4.1 Verify required root files exist: `migration.md`, `package.json`, `pnpm-workspace.yaml`, `.gitignore`, `docs/upstream-sync.md`, `docs/upstream-patches.md`, and `scripts/sync-upstream.sh`.
+- [x] 4.2 Verify `vendor/used-market-notifier/` contains upstream scraper files and tests.
+- [x] 4.3 Verify forbidden legacy app files do not exist at the active root outside `vendor/used-market-notifier/`.
+- [x] 4.4 Verify v2 frontend files and directories, including `apps/web/` and SolidJS setup files, do not exist.
+- [x] 4.5 Run `openspec status --change bootstrap-v1-workspace` and confirm the change remains apply-ready.
