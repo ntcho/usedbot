@@ -8,8 +8,9 @@
   },
   "scripts": {
     "sync:upstream": "./scripts/sync-upstream.sh",
-    "test": "tsx --test packages/scraper-client/src/index.test.ts packages/core/src/index.test.ts",
-    "typecheck": "tsc --noEmit"
+    "test": "tsx --test packages/scraper-client/src/index.test.ts packages/core/src/index.test.ts apps/cli/src/index.test.ts",
+    "typecheck": "tsc --noEmit",
+    "usedbot": "tsx apps/cli/src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",

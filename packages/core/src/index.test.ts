@@ -209,6 +209,7 @@ test("plain text storage reloads persisted state from repo-local files", async (
 
     const recoveredState = await recoveredEngine.getState();
     assert.equal(recoveredState.meta.monitorCyclesCompleted, 1);
+    assert.deepEqual(recoveredState.searches, []);
     assert.equal(recoveredState.listings.length, 1);
     assert.equal(recoveredState.listings[0]?.articleId, "b1");
     assert.equal(recoveredState.listings[0]?.normalizedLink, "https://example.com/products/1");
@@ -216,6 +217,95 @@ test("plain text storage reloads persisted state from repo-local files", async (
     const listingsFile = JSON.parse(await readFile(join(dataDir, "listings.json"), "utf8")) as Array<{ articleId: string }>;
     assert.equal(listingsFile.length, 1);
     assert.equal(listingsFile[0]?.articleId, "b1");
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("configured searches persist visibly in repo-local files", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-searches-"));
+
+  try {
+    const engine = createCoreEngine({
+      scraperClient: new FakeScraperClient([]),
+      store: new PlainTextStateStore({ dataDir }),
+    });
+
+    assert.equal(
+      await engine.addSearch({ marketplace: "danggeun", query: " camera ", location: " Seoul " }),
+      true,
+    );
+    assert.equal(
+      await engine.addSearch({ marketplace: "danggeun", query: "camera", location: "Seoul" }),
+      false,
+    );
+
+    const reloadedEngine = createCoreEngine({
+      scraperClient: new FakeScraperClient([]),
+      store: new PlainTextStateStore({ dataDir }),
+    });
+    const reloadedState = await reloadedEngine.getState();
+
+    assert.deepEqual(reloadedState.searches, [
+      {
+        marketplace: "danggeun",
+        query: "camera",
+        location: "Seoul",
+      },
+    ]);
+
+    const searchesFile = JSON.parse(await readFile(join(dataDir, "searches.json"), "utf8")) as Array<{
+      marketplace: string;
+      query: string;
+      location?: string;
+    }>;
+    assert.deepEqual(searchesFile, [
+      {
+        marketplace: "danggeun",
+        query: "camera",
+        location: "Seoul",
+      },
+    ]);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("configured monitor cycles use stored searches and pass headed debugging through", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-configured-run-"));
+
+  try {
+    const client = new FakeScraperClient([
+      {
+        ok: true,
+        marketplace: "bunjang",
+        listings: [],
+      },
+    ]);
+    const engine = createCoreEngine({
+      scraperClient: client,
+      store: new PlainTextStateStore({ dataDir }),
+    });
+
+    await assert.rejects(
+      () => engine.runConfiguredMonitorCycle(),
+      /No searches are configured/,
+    );
+
+    assert.equal(await engine.addSearch({ marketplace: "bunjang", query: "phone" }), true);
+
+    const result = await engine.runConfiguredMonitorCycle({ headed: true });
+    assert.equal(result.searchResults.length, 1);
+    assert.deepEqual(client.requests, [
+      {
+        marketplace: "bunjang",
+        query: "phone",
+        headed: true,
+      },
+    ]);
+
+    assert.equal(await engine.removeSearch({ marketplace: "bunjang", query: "phone" }), true);
+    assert.equal(await engine.removeSearch({ marketplace: "bunjang", query: "phone" }), false);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }

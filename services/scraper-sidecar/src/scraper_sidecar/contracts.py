@@ -67,6 +67,7 @@ class SearchRequest:
     marketplace: Marketplace
     query: str
     location: str | None = None
+    headed: bool = False
 
 
 @dataclass(slots=True)

@@ -64,6 +64,7 @@ export interface SearchRequest {
   marketplace: Marketplace;
   query: string;
   location?: string;
+  headed?: boolean;
 }
 
 export interface SearchResponse {
@@ -153,6 +154,7 @@ export interface CoreStateMeta {
 export interface CoreStateSnapshot {
   meta: CoreStateMeta;
   settings: CoreSettings;
+  searches: SearchRequest[];
   listings: StoredListing[];
   priceHistory: PriceChangeRecord[];
   saleStatusHistory: SaleStatusChangeRecord[];
@@ -355,6 +357,24 @@ export function parseHealthResponse(value: unknown): HealthResponse {
   };
 }
 
+export function parseSearchRequest(value: unknown, context = "search request"): SearchRequest {
+  const record = asRecord(value, context);
+  const marketplace = readString(record, "marketplace", context);
+  if (!isMarketplace(marketplace)) {
+    throw new TypeError(`${context}.marketplace is invalid`);
+  }
+
+  const location = readOptionalString(record, "location");
+  const headed = record.headed === undefined ? undefined : readBoolean(record, "headed", context);
+
+  return {
+    marketplace,
+    query: readString(record, "query", context),
+    ...(location === undefined ? {} : { location }),
+    ...(headed === undefined ? {} : { headed }),
+  };
+}
+
 export function parseSearchResponse(value: unknown): SearchResponse {
   const record = asRecord(value, "search response");
   const marketplace = readString(record, "marketplace", "search response");
@@ -543,6 +563,7 @@ export function createEmptyCoreState(settings: Partial<CoreSettings> = {}): Core
       monitorCyclesCompleted: 0,
     },
     settings: createCoreSettings(settings),
+    searches: [],
     listings: [],
     priceHistory: [],
     saleStatusHistory: [],

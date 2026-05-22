@@ -55,6 +55,7 @@ class UpstreamMarketplaceAdapter:
         self.marketplace = marketplace
         self._scraper: UpstreamScraper | None = None
         self._import_error: Exception | None = None
+        self._headless = True
 
     def capability(self) -> CapabilityDTO:
         available, reason = self._importable()
@@ -73,7 +74,7 @@ class UpstreamMarketplaceAdapter:
         )
 
     async def search(self, request: SearchRequest) -> list[Any]:
-        scraper = await self._get_scraper()
+        scraper = await self._get_scraper(headed=request.headed)
         try:
             items = await scraper._safe_search_async(request.query, request.location)
         except Exception as exc:
@@ -107,6 +108,7 @@ class UpstreamMarketplaceAdapter:
         if self._scraper is not None:
             await self._scraper.close()
             self._scraper = None
+        self._headless = True
 
     def _importable(self) -> tuple[bool, str | None]:
         try:
@@ -116,19 +118,25 @@ class UpstreamMarketplaceAdapter:
             return False, str(exc)
         return True, None
 
-    async def _get_scraper(self) -> UpstreamScraper:
+    async def _get_scraper(self, *, headed: bool = False) -> UpstreamScraper:
+        requested_headless = not headed
+        if self._scraper is not None and self._headless != requested_headless:
+            await self._scraper.close()
+            self._scraper = None
+
         if self._scraper is not None:
             return self._scraper
         if self._import_error is not None:
             raise SidecarFailure(map_upstream_failure("runtime_unavailable", self._import_error))
 
         scraper_class = self._load_scraper_class()
-        scraper = scraper_class(headless=True, disable_images=True)
+        scraper = scraper_class(headless=requested_headless, disable_images=True)
         try:
             await scraper.start()
         except Exception as exc:
             raise SidecarFailure(map_upstream_failure("runtime_unavailable", exc)) from exc
         self._scraper = scraper
+        self._headless = requested_headless
         return scraper
 
     def _load_scraper_class(self) -> type[UpstreamScraper]:

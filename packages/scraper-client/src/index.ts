@@ -11,7 +11,7 @@ import {
   type SearchResponse,
 } from "@usedbot/shared";
 
-const DEFAULT_BASE_URL = "http://127.0.0.1:8000";
+const DEFAULT_BASE_URL = "http://127.0.0.1:5111";
 
 export interface ScraperClient {
   health(): Promise<HealthResponse>;

@@ -9,6 +9,7 @@ import {
   normalizeListingLink,
   normalizeSaleStatus,
   nowTimestamp,
+  parseSearchRequest,
   parsePriceTextToValue,
   preferNonEmpty,
   type CoreSettings,
@@ -32,6 +33,7 @@ import {
 
 const META_FILE = "meta.json";
 const SETTINGS_FILE = "settings.json";
+const SEARCHES_FILE = "searches.json";
 const LISTINGS_FILE = "listings.json";
 const PRICE_HISTORY_FILE = "price-history.json";
 const SALE_STATUS_HISTORY_FILE = "sale-status-history.json";
@@ -57,9 +59,10 @@ export class PlainTextStateStore {
     await mkdir(this.dataDir, { recursive: true });
 
     const state = createEmptyCoreState(this.#defaultSettings);
-    const [meta, settings, listings, priceHistory, saleStatusHistory, notificationDecisions] = await Promise.all([
+    const [meta, settings, searches, listings, priceHistory, saleStatusHistory, notificationDecisions] = await Promise.all([
       this.#readJson(META_FILE),
       this.#readJson(SETTINGS_FILE),
+      this.#readJson(SEARCHES_FILE),
       this.#readJson(LISTINGS_FILE),
       this.#readJson(PRICE_HISTORY_FILE),
       this.#readJson(SALE_STATUS_HISTORY_FILE),
@@ -77,6 +80,16 @@ export class PlainTextStateStore {
 
     if (isRecord(settings)) {
       state.settings = mergeCoreSettings(state.settings, settings as Partial<CoreSettings>);
+    }
+
+    if (Array.isArray(searches)) {
+      state.searches = searches.flatMap((search, index) => {
+        try {
+          return [normalizeStoredSearch(parseSearchRequest(search, `searches[${index}]`))];
+        } catch {
+          return [];
+        }
+      });
     }
 
     if (Array.isArray(listings)) {
@@ -130,6 +143,7 @@ export class PlainTextStateStore {
 
     await writeJsonAtomic(join(this.dataDir, META_FILE), normalized.meta);
     await writeJsonAtomic(join(this.dataDir, SETTINGS_FILE), normalized.settings);
+    await writeJsonAtomic(join(this.dataDir, SEARCHES_FILE), normalized.searches);
     await writeJsonAtomic(join(this.dataDir, LISTINGS_FILE), normalized.listings);
     await writeJsonAtomic(join(this.dataDir, PRICE_HISTORY_FILE), normalized.priceHistory);
     await writeJsonAtomic(join(this.dataDir, SALE_STATUS_HISTORY_FILE), normalized.saleStatusHistory);
@@ -163,6 +177,44 @@ export class CoreEngine {
     state.meta.updatedAt = nowTimestamp();
     await this.#store.save(state);
     return structuredClone(state);
+  }
+
+  async addSearch(search: SearchRequest): Promise<boolean> {
+    const state = await this.#ensureState();
+    const normalized = normalizeStoredSearch(search);
+    if (state.searches.some((current) => sameSearch(current, normalized))) {
+      return false;
+    }
+
+    state.searches.push(normalized);
+    state.meta.updatedAt = nowTimestamp();
+    await this.#store.save(state);
+    return true;
+  }
+
+  async removeSearch(search: SearchRequest): Promise<boolean> {
+    const state = await this.#ensureState();
+    const normalized = normalizeStoredSearch(search);
+    const nextSearches = state.searches.filter((current) => !sameSearch(current, normalized));
+    if (nextSearches.length === state.searches.length) {
+      return false;
+    }
+
+    state.searches = nextSearches;
+    state.meta.updatedAt = nowTimestamp();
+    await this.#store.save(state);
+    return true;
+  }
+
+  async runConfiguredMonitorCycle(options: { headed?: boolean } = {}): Promise<MonitorCycleResult> {
+    const state = await this.#ensureState();
+    if (state.searches.length === 0) {
+      throw new Error("No searches are configured. Add a search before running monitor.");
+    }
+
+    return this.runMonitorCycle(
+      state.searches.map((search) => normalizeRuntimeSearch(search, options.headed)),
+    );
   }
 
   async runMonitorCycle(searches: SearchRequest[]): Promise<MonitorCycleResult> {
@@ -507,6 +559,46 @@ function createSearchFailure(criteria: SearchRequest, error: unknown): SearchRes
     listings: [],
     failure: toFailureDTO(error),
   };
+}
+
+function normalizeStoredSearch(search: SearchRequest): SearchRequest {
+  const query = search.query.trim();
+  const location = normalizeOptionalText(search.location);
+
+  return {
+    marketplace: search.marketplace,
+    query,
+    ...(location === undefined ? {} : { location }),
+  };
+}
+
+function normalizeRuntimeSearch(search: SearchRequest, headed: boolean | undefined): SearchRequest {
+  const normalized = normalizeStoredSearch(search);
+  if (headed !== true) {
+    return normalized;
+  }
+
+  return {
+    ...normalized,
+    headed: true,
+  };
+}
+
+function sameSearch(left: SearchRequest, right: SearchRequest): boolean {
+  return (
+    left.marketplace === right.marketplace &&
+    left.query === right.query &&
+    normalizeOptionalText(left.location) === normalizeOptionalText(right.location)
+  );
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 function toFailureDTO(error: unknown): FailureDTO {
