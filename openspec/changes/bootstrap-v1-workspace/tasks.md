@@ -1,23 +1,23 @@
 ## 1. Bootstrap Root Workspace
 
-- [ ] 1.1 Inspect the current worktree and existing remotes before changing files.
-- [ ] 1.2 Create `migration.md` with the reviewed v1 migration plan and recorded decisions.
-- [ ] 1.3 Create root `package.json` with private workspace metadata, pnpm package manager metadata, and Node 22 engine constraints.
-- [ ] 1.4 Create `pnpm-workspace.yaml` including future `apps/*` and `packages/*` workspaces.
-- [ ] 1.5 Create `.gitignore` entries for dependencies, build output, Python caches, virtual environments, local runtime `data/`, logs, and editor/system files.
+- [x] 1.1 Inspect the current worktree and existing remotes before changing files.
+- [x] 1.2 Create `migration.md` with the reviewed v1 migration plan and recorded decisions.
+- [x] 1.3 Create root `package.json` with private workspace metadata, pnpm package manager metadata, and Node 22 engine constraints.
+- [x] 1.4 Create `pnpm-workspace.yaml` including future `apps/*` and `packages/*` workspaces.
+- [x] 1.5 Create `.gitignore` entries for dependencies, build output, Python caches, virtual environments, local runtime `data/`, logs, and editor/system files.
 
 ## 2. Add Upstream Workflow Documentation
 
-- [ ] 2.1 Create `docs/upstream-sync.md` documenting initial subtree vendoring and future subtree pull workflow.
-- [ ] 2.2 Create `docs/upstream-patches.md` documenting the vendor patch policy and required patch metadata.
-- [ ] 2.3 Create `scripts/sync-upstream.sh` to fetch upstream and run subtree pull for `vendor/used-market-notifier/`.
-- [ ] 2.4 Mark `scripts/sync-upstream.sh` executable.
+- [x] 2.1 Create `docs/upstream-sync.md` documenting initial subtree vendoring and future subtree pull workflow.
+- [x] 2.2 Create `docs/upstream-patches.md` documenting the vendor patch policy and required patch metadata.
+- [x] 2.3 Create `scripts/sync-upstream.sh` to fetch upstream and run subtree pull for `vendor/used-market-notifier/`.
+- [x] 2.4 Mark `scripts/sync-upstream.sh` executable.
 
 ## 3. Vendor Upstream Project
 
-- [ ] 3.1 Inspect the upstream repository default branch before assuming `main`.
-- [ ] 3.2 Add the `upstream` remote as `https://github.com/twbeatles/used-market-notifier` if it does not already exist.
-- [ ] 3.3 Fetch the `upstream` remote.
+- [x] 3.1 Inspect the upstream repository default branch before assuming `main`.
+- [x] 3.2 Add the `upstream` remote as `https://github.com/twbeatles/used-market-notifier` if it does not already exist.
+- [x] 3.3 Fetch the `upstream` remote.
 - [ ] 3.4 Add the upstream project under `vendor/used-market-notifier/` using `git subtree add --prefix=vendor/used-market-notifier upstream <branch> --squash`.
 
 ## 4. Verify Guardrails

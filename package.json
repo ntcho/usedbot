@@ -1,0 +1,12 @@
+{
+  "name": "usedbot",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "sync:upstream": "./scripts/sync-upstream.sh"
+  }
+}
