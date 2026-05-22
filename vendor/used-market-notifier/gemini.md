@@ -1,0 +1,615 @@
+# 🤖 Gemini AI 지침서 - 중고거래 알리미 (Used Market Notifier)
+
+> **이 문서는 Gemini AI가 프로젝트를 이해하고 효과적으로 지원하기 위한 포괄적인 가이드입니다.**
+>
+> 참고: 현재 앱은 `scraper_mode` 기반 이중 엔진(Playwright/Selenium)을 사용합니다. 기본값은 `playwright_primary`이며 런타임 문제 시 Selenium으로 자동 강등됩니다.
+>
+> 참고: 당근 지역 필터는 현재 세션 지역 기준의 best-effort 검색 후 후처리로 동작하며, 요청 지역 정확도를 보장하지 않습니다.
+
+---
+
+## 📋 프로젝트 개요
+
+### 목적
+당근마켓, 번개장터, 중고나라 등 한국 주요 중고거래 플랫폼을 실시간으로 모니터링하여, 등록된 키워드에 맞는 새 상품이 올라오면 사용자에게 알림을 보내는 데스크톱 애플리케이션입니다.
+
+### 기술 스택
+| 카테고리 | 기술 |
+|----------|------|
+| **언어** | Python 3.10+ |
+| **GUI 프레임워크** | PyQt6 |
+| **브라우저 자동화** | Playwright + Selenium (이중 엔진) |
+| **데이터베이스** | SQLite3 (스레드 안전) |
+| **알림** | Telegram Bot API, Discord Webhook, Slack Webhook |
+| **빌드** | PyInstaller |
+
+### 지원 플랫폼
+| 플랫폼 | 식별자 | 아이콘 | 스크래퍼 |
+|--------|--------|--------|----------|
+| 당근마켓 | `danggeun` | 🥕 | `scrapers/danggeun.py` |
+| 번개장터 | `bunjang` | ⚡ | `scrapers/bunjang.py` |
+| 중고나라 | `joonggonara` | 🛒 | `scrapers/joonggonara.py` |
+
+---
+
+## 🏗️ 아키텍처
+
+### 전체 구조
+
+```
+used_market_notifier/
+├── main.py                 # 애플리케이션 진입점 (GUI/CLI 모드)
+├── monitor_engine.py       # 핵심 모니터링 엔진
+├── db.py                   # SQLite 데이터베이스 관리자
+├── models.py               # 데이터 모델 (dataclass 기반)
+├── settings_manager.py     # JSON 기반 설정 관리
+├── constants.py            # 전역 상수 정의
+├── auto_tagger.py          # 자동 태깅 시스템
+├── backup_manager.py       # 백업/복원 관리
+├── export_manager.py       # CSV/Excel 내보내기
+├── message_templates.py    # 판매자 메시지 템플릿
+├── gui/                    # PyQt6 UI 컴포넌트
+│   ├── main_window.py      # 메인 윈도우
+│   ├── styles.py           # Catppuccin 테마 스타일시트
+│   ├── keyword_manager.py  # 키워드 관리 위젯
+│   ├── settings_dialog.py  # 설정 다이얼로그
+│   ├── listings_widget.py  # 매물 목록 브라우저
+│   ├── favorites_widget.py # 즐겨찾기 관리
+│   ├── stats_widget.py     # 통계 대시보드
+│   ├── components.py       # 재사용 UI 컴포넌트
+│   ├── charts.py           # 차트 위젯
+│   └── ...
+├── scrapers/               # 플랫폼별 스크래퍼
+│   ├── base.py             # 추상 베이스 클래스
+│   ├── playwright_base.py  # Playwright 기반 베이스
+│   ├── stealth.py          # 봇 탐지 우회 (15가지 기법)
+│   ├── debug.py            # 스크래핑 디버거
+│   ├── danggeun.py         # 당근마켓
+│   ├── bunjang.py          # 번개장터
+│   └── joonggonara.py      # 중고나라
+└── notifiers/              # 알림 모듈
+    ├── base.py             # 추상 베이스 클래스
+    ├── telegram_notifier.py
+    ├── discord_notifier.py
+    └── slack_notifier.py
+```
+
+### 데이터 흐름
+
+```
+[MonitorEngine]
+      │
+      ├── 1. settings_manager.py → 키워드/설정 로드
+      │
+      ├── 2. scrapers/*.py → 플랫폼별 검색 실행
+      │   └── stealth.py → 봇 탐지 우회
+      │
+      ├── 3. db.py → 중복 체크, 저장, 가격 변동 추적
+      │   └── auto_tagger.py → 자동 태깅
+      │
+      ├── 4. notifiers/*.py → 알림 전송
+      │
+      └── 5. PyQt Signal → UI 업데이트
+          └── components.py → 카드/뱃지 렌더링
+```
+
+---
+
+## 🔑 핵심 데이터 모델
+
+### Item (매물)
+```python
+@dataclass
+class Item:
+    platform: str        # 'danggeun', 'bunjang', 'joonggonara'
+    article_id: str      # 플랫폼 고유 ID
+    title: str           # 상품 제목
+    price: str           # 가격 문자열 ("50,000원")
+    link: str            # 상세 페이지 URL
+    keyword: str         # 검색 키워드
+    thumbnail: Optional[str]
+    seller: Optional[str]
+    location: Optional[str]
+    price_numeric: Optional[int]  # 숫자 가격 (필터링용)
+```
+
+### SearchKeyword (검색 키워드)
+```python
+@dataclass
+class SearchKeyword:
+    keyword: str                    # 검색어
+    min_price: Optional[int]        # 최소 가격
+    max_price: Optional[int]        # 최대 가격
+    location: Optional[str]         # 지역 필터
+    exclude_keywords: list[str]     # 제외 키워드
+    platforms: list[str]            # 검색 플랫폼
+    enabled: bool                   # 활성화 여부
+    notify_enabled: bool            # 알림 토글
+    custom_interval: Optional[int]  # 개별 검색 주기
+    target_price: Optional[int]     # 목표 가격
+```
+
+### SaleStatus (판매 상태)
+```python
+class SaleStatus(Enum):
+    FOR_SALE = "for_sale"    # 판매중
+    RESERVED = "reserved"    # 예약중
+    SOLD = "sold"            # 판매완료
+    UNKNOWN = "unknown"      # 상태 미확인
+```
+
+### TagRule (자동 태깅 규칙)
+```python
+@dataclass
+class TagRule:
+    tag_name: str           # 태그 이름 ("A급", "풀박스" 등)
+    keywords: list[str]     # 트리거 키워드
+    color: str              # 태그 색상 (#a6e3a1)
+    icon: str               # 태그 아이콘 (✨)
+    enabled: bool           # 활성화 여부
+```
+
+---
+
+## 🎯 주요 기능 모듈
+
+### 1. 자동 태깅 시스템 (`auto_tagger.py`)
+상품 제목을 분석하여 자동으로 태그를 부여합니다.
+
+**기본 태그 규칙:**
+| 태그 | 트리거 키워드 | 아이콘 |
+|------|--------------|--------|
+| A급 | A급, 에이급, 상태좋음, 최상, S급 | ✨ |
+| 풀박스 | 풀박스, 미개봉, 새제품, 미사용 | 📦 |
+| 급처 | 급처, 급매, 빨리, 오늘만 | 🔥 |
+| 네고가능 | 네고가능, 네고, 협의가능 | 💬 |
+| 택포 | 택포, 택배포함, 무배 | 📮 |
+| 직거래 | 직거래, 직거래만 | 🤝 |
+| 정품 | 정품, 구매영수증, 보증서 | ✅ |
+
+### 2. 백업 관리자 (`backup_manager.py`)
+```python
+# 주요 기능
+create_backup()           # DB + 설정 ZIP 백업
+restore_backup(file)      # 백업 복원
+auto_backup_if_needed()   # 자동 주기 백업
+cleanup_old_backups(5)    # 오래된 백업 삭제
+list_backups()            # 백업 목록 조회
+```
+
+### 3. 메시지 템플릿 (`message_templates.py`)
+판매자에게 보낼 메시지 템플릿 시스템입니다.
+
+**기본 템플릿:**
+- 기본 문의
+- 가격 문의  
+- 직거래 문의
+- 상태 문의
+- 구성품 문의
+- 당근 안부인사 (당근마켓 전용)
+- 번개장터 빠른문의 (번개장터 전용)
+
+**템플릿 변수:**
+- `{title}` - 상품 제목
+- `{price}` - 판매 가격
+- `{seller}` - 판매자 이름
+- `{location}` - 지역
+- `{target_price}` - 목표 가격
+- `{platform}` - 플랫폼 이름
+
+### 4. 내보내기 관리자 (`export_manager.py`)
+- CSV 내보내기 (UTF-8 BOM)
+- Excel 내보내기 (openpyxl 사용)
+
+---
+
+## 🎨 UI 컴포넌트 가이드
+
+### 재사용 컴포넌트 (`gui/components.py`)
+
+| 컴포넌트 | 용도 |
+|----------|------|
+| `GlassCard` | 글래스모피즘 카드 (hover 효과) |
+| `AnimatedButton` | 프레스 애니메이션 버튼 |
+| `PulsingDot` | 상태 표시 점멸 인디케이터 |
+| `StatCard` | 통계 표시 카드 (그라디언트) |
+| `PlatformBadge` | 플랫폼 아이콘 뱃지 |
+| `SectionHeader` | 섹션 헤더 라벨 |
+| `EmptyState` | 빈 상태 안내 뷰 |
+| `Toast` | 토스트 알림 |
+| `StatusBadge` | 판매 상태 배지 |
+
+### 스타일 상수 (`gui/styles.py`)
+
+**Catppuccin Mocha 팔레트:**
+```python
+CATPPUCCIN = {
+    'base': '#1e1e2e',      # 메인 배경
+    'mantle': '#181825',    # 더 어두운 배경
+    'surface0': '#313244',  # 카드 배경
+    'surface1': '#45475a',  # 구분선
+    'text': '#cdd6f4',      # 기본 텍스트
+    'subtext0': '#a6adc8',  # 보조 텍스트
+    'blue': '#89b4fa',      # 강조색
+    'green': '#a6e3a1',     # 성공/활성
+    'red': '#f38ba8',       # 오류/경고
+    'yellow': '#f9e2af',    # 주의
+    'peach': '#fab387',     # 보조 강조
+    'teal': '#94e2d5',      # 정보
+    'lavender': '#b4befe',  # 선택됨
+}
+```
+
+---
+
+## ⚠️ 중요 제약사항
+
+### ❌ 절대 수정 금지 영역
+
+1. **스크래퍼 파싱 로직**
+   - `scrapers/danggeun.py`, `bunjang.py`, `joonggonara.py`의 CSS 셀렉터
+   - **이유**: 플랫폼 HTML 구조에 민감하게 의존
+
+2. **스텔스 모듈** (`scrapers/stealth.py`)
+   - 15가지 봇 탐지 우회 기법:
+     - WebDriver 감지 우회
+     - Chrome 객체 시뮬레이션
+     - 플러그인/언어 위장
+     - WebGL 벤더/렌더러 위장
+     - Canvas/Audio 핑거프린트 보호
+   - **이유**: 수정 시 플랫폼 차단 위험
+
+3. **데이터베이스 스키마**
+   - `db.py`의 `create_tables()` 메서드
+   - **이유**: 기존 데이터 호환성
+
+### ⚡ 수정 시 주의 영역
+
+| 영역 | 주의사항 |
+|------|----------|
+| `monitor_engine.py` | 비동기 흐름, QThread 상호작용 |
+| GUI 시그널 | 메인 스레드에서만 UI 업데이트 |
+| JSON 직렬화 | 기존 설정 파일 호환성 |
+| 알림 메시지 | 이모지, 한글 인코딩 |
+
+---
+
+## 🛠️ 개발 가이드라인
+
+### 코드 스타일
+```python
+# ✅ 타입 힌트 필수
+def add_listing(self, item: Item) -> tuple[bool, dict | None, int]:
+    """매물 추가 또는 업데이트
+    
+    Returns:
+        (is_new, price_change_info, listing_id)
+    """
+    pass
+
+# ✅ 로깅 패턴
+self.logger.info(f"새 매물 발견: {item.title}")
+self.logger.error(f"크롤링 실패: {e}")
+
+# ✅ 한글 주석
+# 퍼지 중복 검사: 최근 24시간 내 유사 제목 확인
+```
+
+### UI 가이드라인
+```python
+# ✅ ObjectName 필수 지정 (스타일 적용용)
+button.setObjectName("primary")
+card.setObjectName("glassCard")
+
+# ✅ 시그널로 UI 업데이트
+class MonitorThread(QThread):
+    status_update = pyqtSignal(str)
+    new_item = pyqtSignal(object)
+```
+
+### 비동기 + QThread 패턴
+```python
+# Windows에서 asyncio 정책 설정 (버전 호환)
+if sys.platform == "win32":
+    selector_policy = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+    if selector_policy is not None:
+        asyncio.set_event_loop_policy(selector_policy())
+
+# QThread 내 asyncio 실행
+def run(self):
+    if sys.platform == "win32":
+        proactor_policy = getattr(asyncio, "WindowsProactorEventLoopPolicy", None)
+        if proactor_policy is not None:
+            asyncio.set_event_loop_policy(proactor_policy())
+    self.loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(self.loop)
+    try:
+        self.loop.run_until_complete(self.engine.start())
+    finally:
+        self.loop.close()
+```
+
+---
+
+## 📦 상수 참조 (`constants.py`)
+
+```python
+# 타이밍
+SCRAPE_DELAY_SECONDS = 2
+DRIVER_WAIT_TIMEOUT = 10
+DRIVER_PAGE_LOAD_TIMEOUT = 30
+KEYWORD_PAUSE_MS = 2000
+AUTO_REFRESH_INTERVAL_MS = 60000
+
+# 재시도
+MAX_RETRY_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 1.0
+RETRY_BACKOFF_MULTIPLIER = 2.0
+
+# 페이지네이션/캐시
+DEFAULT_PAGE_SIZE = 50
+DB_CACHE_TTL_SECONDS = 30
+
+# 백업/정리
+DEFAULT_BACKUP_INTERVAL_DAYS = 7
+DEFAULT_BACKUP_KEEP_COUNT = 5
+DEFAULT_CLEANUP_DAYS = 30
+
+# 플랫폼
+PLATFORMS = ['danggeun', 'bunjang', 'joonggonara']
+PLATFORM_NAMES = {
+    'danggeun': '당근마켓',
+    'bunjang': '번개장터',
+    'joonggonara': '중고나라',
+}
+PLATFORM_ICONS = {
+    'danggeun': '🥕',
+    'bunjang': '⚡',
+    'joonggonara': '🛒',
+}
+```
+
+---
+
+## 🔍 디버깅 가이드
+
+### 로그 확인
+- 파일: `notifier.log` (5MB 회전, 3개 백업)
+- 레벨: INFO (기본)
+
+### 스크래핑 디버그
+```python
+# 디버그 모드 활성화
+scraper = DanggeunScraper(
+    headless=False,       # 브라우저 표시
+    debug_mode=True,      # 디버그 모드
+    debug_level="verbose" # 상세 로그
+)
+
+# 스크린샷 저장
+await scraper.take_screenshot("debug_screenshot")
+```
+
+### DB 디버그
+```sql
+-- 최근 매물
+SELECT * FROM listings ORDER BY created_at DESC LIMIT 10;
+
+-- 가격 변동
+SELECT l.title, ph.old_price, ph.new_price, ph.changed_at
+FROM price_history ph JOIN listings l ON ph.listing_id = l.id;
+
+-- 플랫폼별 통계
+SELECT platform, COUNT(*) FROM listings GROUP BY platform;
+```
+
+---
+
+## 📝 자주 사용하는 패턴
+
+### 새 기능 추가 체크리스트
+- [ ] `models.py`에 데이터 클래스 추가
+- [ ] `settings_manager.py`에 설정 항목 추가
+- [ ] `db.py`에 테이블/쿼리 추가
+- [ ] GUI 컴포넌트 구현
+- [ ] `gui/styles.py` 스타일 추가
+- [ ] 테스트 및 검증
+
+### 새 스크래퍼 추가
+```python
+from scrapers.playwright_base import PlaywrightScraper
+from models import Item
+
+class NewPlatformScraper(PlaywrightScraper):
+    PLATFORM = "new_platform"
+    BASE_URL = "https://example.com"
+    
+    async def search(self, keyword: str, location: str = None) -> list[Item]:
+        # 1. 검색 페이지 이동
+        # 2. 결과 파싱
+        # 3. Item 리스트 반환
+        pass
+```
+
+---
+
+## 📌 요약
+
+| 항목 | 설명 |
+|------|------|
+| **언어** | Python 3.10+ |
+| **GUI** | PyQt6 + Catppuccin Mocha 테마 |
+| **DB** | SQLite3 (스레드 세이프) |
+| **스크래핑** | `scraper_mode` 기반 이중 엔진 (Playwright/Selenium) |
+| **알림** | Telegram, Discord, Slack |
+| **수정 금지** | 스크래퍼 파싱 로직, 스텔스 기법, DB 스키마 |
+
+---
+
+**AI 어시스턴트로서 이 프로젝트를 지원할 때, 위의 제약사항을 준수하고 기존 코드 패턴을 따르세요.**
+
+## 2026-02 Consistency Update (Dual Engine + Packaging)
+
+This section is the source of truth for current behavior and supersedes older Selenium-only/default wording in this document.
+
+- The monitor path is dual-engine, controlled by `scraper_mode`:
+  - `playwright_primary` (default)
+  - `selenium_primary`
+  - `selenium_only`
+- Fallback runs only when:
+  - primary raises an exception, or
+  - primary returns zero results and `fallback_on_empty_results=true`, and
+  - per-platform fallback budget is below `max_fallback_per_cycle`.
+- Merged results are deduped by:
+  - `(platform, article_id)` first
+  - `url/link` second
+- Danggeun location filtering is strict for unknown locations when filter is set.
+- Danggeun runtime warns that region filtering is still best-effort because search-stage region binding is not guaranteed.
+- Joonggonara completion-title filtering uses substring rules.
+
+## 2026-03 Consistency Update (Danggeun/Bunjang Parser)
+
+- Danggeun parser updates:
+  - `article_id` extraction now supports numeric IDs, slug tokens, and deterministic hash fallback.
+  - JSON-LD-first parsing with maximum `120` items per query.
+  - DOM fallback targets search cards only:
+    - `a[data-gtm='search_article'][href^='/kr/buy-sell/']`
+  - seller enrichment now scans multiple candidate nodes and can recover seller names from profile `aria-label` values when visible text is empty.
+- Bunjang parser updates:
+  - unknown location (`지역정보 없음` variants) is normalized to `None`.
+  - fallback text parsing removes badge lines (`배송비포함`, `검수가능`) before field extraction.
+  - detail enrichment is API-first, but continues to DOM fallback when partial API responses still leave seller/location empty.
+- `.gitignore` now includes `debug_output/` for Playwright debug artifacts.
+
+### Runtime / Packaging
+
+- Install Playwright runtime:
+  - `python -m playwright install chromium`
+- Team regression command:
+  - `python -m unittest discover -s tests -q`
+- Onefile build command:
+  - `pyinstaller used_market_notifier.spec`
+- Type-check command:
+  - `pyright .`
+- `used_market_notifier.spec` collects Playwright Python modules.
+- PyInstaller onefile build intentionally excludes `matplotlib`; chart widgets fall back to placeholder mode.
+- Chromium runtime binaries are not bundled in onefile artifacts.
+- If Playwright runtime is unavailable, engine auto-degrades to Selenium with warning logs.
+
+## 2026-04 Audit Remediation Update
+
+- Joonggonara parsing / enrichment:
+  - Naver search uses the cafe article tab (`where=article&ssc=tab.cafe.all`) and accepts only strict Joonggonara cafe article URLs (`cafe.naver.com` / `m.cafe.naver.com`, `/joonggonara/{numeric_id}`).
+  - SmartStore, shopping, and ad URLs are rejected by host/path even when query strings contain `site:cafe.naver.com/joonggonara`.
+  - generic cafe links, URL-only anchors, time/video labels, placeholder text, and numeric-only anchors are rejected as noise before item creation.
+  - detail enrichment waits for `iframe#cafe_main` and extracts seller/location/price/title from the frame body, with outer-page fallback only when the iframe path is unavailable.
+  - detail parsing skips category/UI meta lines, supports `35만원`-style prices, and extracts station/dong-level transaction locations when present.
+- Bunjang detail enrichment / status:
+  - the Bunjang product-detail API is now the primary source for seller, location, price, and sale status.
+  - seller fallback selectors were aligned to the current `/shop/.../products` structure.
+  - scraper-provided sale status is normalized to `for_sale`, `reserved`, `sold`, or `unknown`, and persisted ahead of title-based inference.
+  - when the detail API omits `seller` or `location`, DOM fallback still tries to fill the missing fields from valid seller candidates and `직거래지역` / `거래지역` labels.
+- Search observability:
+  - Danggeun and Bunjang searches now emit per-search candidate counters and drop-reason summaries.
+  - Playwright writes debug artifacts into `debug_output/` when candidate DOM/data exists but parsed results still end at zero.
+  - malformed batches are classified as `parser_malformed`, can trigger fallback, and write debug artifacts when DOM candidates existed.
+- Metadata enrichment flow:
+  - enrichment uses a shared cap of `10` items per platform per keyword per cycle.
+  - pass 1 is targeted prefilter enrichment for location-filter and blocked-seller decisions.
+  - pass 2 uses the remaining budget on kept items that still need seller/location for DB quality and notifications.
+  - `conditional_metadata_enrichment_enabled` defaults to `true`, allowing targeted prefilter enrichment even when global metadata enrichment is off.
+- Packaging / regression coverage:
+  - `used_market_notifier.spec` now collects Playwright modules plus the `aiohttp` dependency tree required by Bunjang detail enrichment.
+  - regression tests now include live-markup fixtures for Danggeun, Bunjang, Joonggonara, and import safety without `selenium`.
+
+## 2026-04 Stabilization Follow-up
+
+- Playwright lifecycle:
+  - Playwright scrapers now retain async browser/context resources with `start/search/enrich/close` instead of launching per search/enrichment call.
+  - `MonitorEngine` awaits async scrapers directly and keeps Selenium/sync compatibility through the executor path.
+  - health checks reflect retained browser/context state and recent runtime/parser failures.
+- Settings resilience:
+  - valid JSON settings are normalized field-by-field; only parse/decode/file errors trigger quarantine.
+  - corrected fields are recorded in `load_recovery_state.normalized_fields`.
+- Data integrity:
+  - `listings.normalized_url` is backfilled and indexed.
+  - listing writes use `(platform, article_id)` first, then `(platform, normalized_url)` as a duplicate key.
+  - `meta.schema_version` tracks schema baseline and startup integrity checks verify required columns.
+- Notification telemetry:
+  - disabled/scheduled-out/no-channel decisions are stored in `notification_delivery_log` as `system` / `skipped_*`.
+  - shutdown does not requeue failed notification retries.
+- GUI / packaging / repo hygiene:
+  - Settings UI exposes scraper mode, empty-result fallback, and fallback budget.
+  - backup restore stops monitoring and exits after restore to avoid stale DB handles.
+  - `.gitignore` includes `*.pre_restore` restore snapshots.
+  - `used_market_notifier.spec` documents async lifecycle and standard-library additions.
+
+## 2026-05 Live Site Stabilization Update
+
+- Bunjang search parsing:
+  - current `a[href*='/products/']` product cards are primary, while legacy `a[data-pid]` cards remain supported.
+  - price-first card text is parsed as price/title/time instead of storing the price as the title.
+  - `AD`, price-only, count-only, and time tokens are filtered before title/location persistence.
+  - Playwright and Selenium Bunjang scrapers share the same pure parser helper and can merge detail API `product.name`, `product.price`, `product.saleStatus`, and `shop.name`.
+- Joonggonara search filtering:
+  - Naver search URL generation is pinned to the cafe article tab.
+  - result acceptance is strict host/path validation with `urlsplit()`, so shopping/smartstore/ad redirects are rejected before item creation.
+  - iframe/detail body fallback remains available for metadata enrichment.
+- Quality gate / operations:
+  - malformed primary results record `parser_malformed`, can use fallback, and write HTML/screenshot/summary artifacts under `debug_output/`.
+  - MonitorEngine keeps platform backoff for 403/429/CAPTCHA-like responses and a per-cycle TTL enrichment cache by article ID.
+  - `scripts/live_smoke.py --keyword 아이폰` is the opt-in live-site check; default unit tests stay network-free.
+- Settings:
+  - `conditional_metadata_enrichment_enabled` is exposed through `AppSettings`, settings normalization/load-save, `settings.example.json`, and the settings UI.
+  - Danggeun location normalization trims trailing separators/time tokens such as `행당동·`.
+
+## 2026-03 Consistency Update (Type Safety + Encoding)
+
+- Repository type baseline is fixed by `pyrightconfig.json`:
+  - `pythonVersion=3.10`
+  - `typeCheckingMode=standard`
+- Optional/nullability guards were aligned across GUI + engine + tests for Pylance/Pyright `0` errors.
+- UTF-8 hygiene gate:
+  - strict decode failures must be `0`
+  - `U+FFFD` occurrences must be `0`
+  - C1 control chars (`0x80-0x9F`) must be `0`
+- Windows PowerShell may need `$env:PYTHONIOENCODING='utf-8'` or `chcp 65001` for readable Korean/emoji console output; log files are UTF-8.
+
+## 2026-03 Consistency Update (Data Integrity + Delivery Reliability)
+
+Treat this as the current baseline for the March 25, 2026 stabilization pass.
+
+- Schema / storage:
+  - auto tags are stored in `listing_auto_tags`
+  - sale-status transitions are stored in `sale_status_history`
+  - channel delivery outcomes are stored in `notification_delivery_log`
+- Listing update policy:
+  - existing listings refresh only with non-empty incoming metadata
+  - `keyword` on the listing row stays stable
+  - sale status is recalculated every cycle
+- Notification behavior:
+  - first cycle skips both new-item and price-change notifications
+  - retries happen per channel only
+  - `notification_log` means successful delivery only
+  - operational failure/rate-limit inspection uses `notification_delivery_log`
+- Metadata enrichment:
+  - controlled by `metadata_enrichment_enabled`
+  - default is off
+  - `conditional_metadata_enrichment_enabled` defaults to `true`
+  - enrichment uses a targeted prefilter pass for location/seller-block decisions, then a postfilter pass for kept items still missing seller/location
+  - hard cap is 10 items per platform per keyword per cycle
+- Cleanup / recovery:
+  - `cleanup_exclude_noted` checks real note/status rows only
+  - auto tags alone must not protect a listing from cleanup
+  - broken settings files are renamed to `settings.broken-YYYYMMDD_HHMMSS.json`
+  - newest valid backup settings payload is restored automatically when possible
+- Packaging / repo hygiene:
+  - `python main.py --headless` is session-only
+  - `used_market_notifier.spec` excludes `tests` and `legacy`
+  - `.gitignore` should cover `settings.broken-*.json`, `*.pre_restore`, rotated logs like `notifier.log.1`, and workspace-local temp directories such as `.tmp/`
+
+### Verification Baseline
+
+- `python -m unittest discover -s tests -q` -> `Ran 77 tests` / `OK`
+- in restricted/sandboxed shells, point `TEMP/TMP` to workspace-local `.tmp/` before running the suite
+- `pyright .` -> run as an optional type-check gate when available

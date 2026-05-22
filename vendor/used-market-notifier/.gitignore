@@ -1,0 +1,57 @@
+# Python bytecode / cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Test / type / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.pyrightcache/
+.coverage
+htmlcov/
+.tox/
+playwright-report/
+test-results/
+
+# Build artifacts (PyInstaller etc.)
+build/
+dist/
+.tmp/
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Secrets / machine-local environment
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# App runtime / local data (do not commit)
+settings.json
+settings.broken-*.json
+*.pre_restore
+listings.db
+listings.db-*
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite*
+*.log
+*.log.*
+
+# Local dumps/backups (do not commit)
+backup/
+debug_output/
