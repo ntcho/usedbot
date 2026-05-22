@@ -5,9 +5,15 @@ import { resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { PlainTextStateStore, createCoreEngine } from "../../../packages/core/src/index.js";
+import {
+  PlainTextStateStore,
+  createCoreEngine,
+  type StateStoreInspectionResult,
+  type StateStoreRepairResult,
+} from "../../../packages/core/src/index.js";
 import { createScraperClient } from "../../../packages/scraper-client/src/index.js";
 import {
+  type CapabilityDTO,
   isMarketplace,
   type CoreSettings,
   type CoreStateSnapshot,
@@ -30,6 +36,8 @@ interface ParsedArguments {
 
 export interface CliCoreEngine {
   getState(): Promise<CoreStateSnapshot>;
+  inspectStorage(): Promise<StateStoreInspectionResult>;
+  repairStorage(): Promise<StateStoreRepairResult>;
   updateSettings(updates: Partial<CoreSettings>): Promise<CoreStateSnapshot>;
   addSearch(search: SearchRequest): Promise<boolean>;
   removeSearch(search: SearchRequest): Promise<boolean>;
@@ -205,6 +213,10 @@ async function execute(argv: string[], runtime: CliRuntime): Promise<number> {
   switch (command) {
     case "config":
       return handleConfig(rest, services, runtime);
+    case "data":
+      return handleData(rest, services, runtime);
+    case "doctor":
+      return handleDoctor(rest, services, runtime);
     case "monitor":
       return handleMonitor(rest, services, runtime);
     case "results":
@@ -269,6 +281,44 @@ async function handleConfig(argv: string[], services: CliServices, runtime: CliR
   }
 
   throw new CliError(`Unknown config command.\n\n${HELP_TEXT}`);
+}
+
+async function handleData(argv: string[], services: CliServices, runtime: CliRuntime): Promise<number> {
+  const [action, ...rest] = argv;
+  if (action !== "repair") {
+    throw new CliError(`Unknown data command: ${action ?? "(missing)"}`);
+  }
+
+  assertNoPositionalsOrFlags(parseArguments(rest), "data repair");
+  const result = await services.engine.repairStorage();
+  renderRepairResult(result, runtime);
+  return 0;
+}
+
+async function handleDoctor(argv: string[], services: CliServices, runtime: CliRuntime): Promise<number> {
+  assertNoPositionalsOrFlags(parseArguments(argv), "doctor");
+
+  let ok = true;
+  runtime.stdout("Doctor report:");
+
+  const inspection = await services.engine.inspectStorage();
+  ok = renderStorageInspection(inspection, runtime) && ok;
+
+  let session: SidecarSession | undefined;
+  try {
+    session = await services.sidecarManager.ensureAvailable();
+    runtime.stdout(`  sidecar: ok (${session.started ? "started locally for this check" : "reachable"})`);
+    const capabilitiesHealthy = renderCapabilities(session.health.capabilities, runtime);
+    ok = capabilitiesHealthy && ok;
+  } catch (error) {
+    ok = false;
+    runtime.stdout("  sidecar: failed");
+    runtime.stdout(`  diagnostic: ${error instanceof Error ? error.message : "Unknown sidecar failure"}`);
+  } finally {
+    await session?.stop();
+  }
+
+  return ok ? 0 : 1;
 }
 
 async function handleMonitor(argv: string[], services: CliServices, runtime: CliRuntime): Promise<number> {
@@ -595,6 +645,62 @@ function renderSettings(state: CoreStateSnapshot, runtime: CliRuntime): void {
   runtime.stdout(`  webhook url: ${state.settings.channels.webhook.url ?? "(not set)"}`);
 }
 
+function renderStorageInspection(result: StateStoreInspectionResult, runtime: CliRuntime): boolean {
+  if (result.ok) {
+    runtime.stdout(`  data: ok (${result.dataDir})`);
+    return true;
+  }
+
+  runtime.stdout(`  data: repair required (${result.dataDir})`);
+  result.issues.forEach((issue) => {
+    runtime.stdout(`  - ${issue.fileName}: ${issue.message}`);
+  });
+  runtime.stdout("  next step: pnpm usedbot data repair");
+  return false;
+}
+
+function renderRepairResult(result: StateStoreRepairResult, runtime: CliRuntime): void {
+  runtime.stdout("Data repair result:");
+  runtime.stdout(`  data dir: ${result.dataDir}`);
+
+  if (result.issues.length === 0) {
+    runtime.stdout("  no repair was needed");
+    return;
+  }
+
+  runtime.stdout("  repaired issues:");
+  result.issues.forEach((issue) => {
+    runtime.stdout(`  - ${issue.fileName}: ${issue.message}`);
+  });
+
+  runtime.stdout("  backups:");
+  result.repairedFiles.forEach((file) => {
+    runtime.stdout(`  - ${file.fileName}: ${file.backupPath ?? "rewritten without backup"}`);
+  });
+}
+
+function renderCapabilities(capabilities: CapabilityDTO[], runtime: CliRuntime): boolean {
+  if (capabilities.length === 0) {
+    runtime.stdout("  capabilities: (none reported)");
+    return true;
+  }
+
+  runtime.stdout("  capabilities:");
+  let ok = true;
+
+  capabilities.forEach((capability) => {
+    const details = [capability.reason, capability.lastFailure].filter(Boolean).join(" | ");
+    runtime.stdout(
+      `  - ${capability.marketplace}: ${capability.available ? "ok" : "unavailable"}${details ? ` (${details})` : ""}`,
+    );
+    if (!capability.available) {
+      ok = false;
+    }
+  });
+
+  return ok;
+}
+
 function renderMonitorResult(result: MonitorCycleResult, runtime: CliRuntime, headed: boolean): void {
   const counts = new Map<string, number>();
   for (const listing of result.processedListings) {
@@ -751,6 +857,8 @@ const HELP_TEXT = [
   "  config search list",
   "  config search remove --marketplace <name> --query <text> [--location <text>]",
   "  config notifications set [--enabled true|false] [--terminal true|false] [--webhook true|false] [--webhook-url <url>]",
+  "  data repair",
+  "  doctor",
   "  monitor run [--headed]",
   "  results list [--limit <n>]",
   "  notify test <terminal|webhook> [--message <text>] [--url <url>]",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
@@ -306,6 +306,79 @@ test("configured monitor cycles use stored searches and pass headed debugging th
 
     assert.equal(await engine.removeSearch({ marketplace: "bunjang", query: "phone" }), true);
     assert.equal(await engine.removeSearch({ marketplace: "bunjang", query: "phone" }), false);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("plain text storage fails loudly when local data is corrupted", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-corrupt-"));
+
+  try {
+    await writeFile(join(dataDir, "listings.json"), "{\n", "utf8");
+    const store = new PlainTextStateStore({ dataDir });
+
+    await assert.rejects(
+      () => store.load(),
+      (error) =>
+        error instanceof Error &&
+        error.message.includes("listings.json") &&
+        error.message.includes("pnpm usedbot data repair"),
+    );
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("plain text storage inspection reports top-level shape mismatches", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-shape-"));
+
+  try {
+    await writeFile(join(dataDir, "listings.json"), "{}\n", "utf8");
+    const store = new PlainTextStateStore({ dataDir });
+    const inspection = await store.inspect();
+
+    assert.equal(inspection.ok, false);
+    assert.equal(inspection.issues.length, 1);
+    assert.equal(inspection.issues[0]?.fileName, "listings.json");
+    assert.match(inspection.issues[0]?.message ?? "", /top-level array/);
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("plain text storage repair backs up broken files and keeps valid data", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-repair-"));
+
+  try {
+    await writeFile(
+      join(dataDir, "searches.json"),
+      JSON.stringify([{ marketplace: "danggeun", query: "camera", location: "Seoul" }], null, 2),
+      "utf8",
+    );
+    await writeFile(join(dataDir, "listings.json"), "{\n", "utf8");
+
+    const store = new PlainTextStateStore({ dataDir });
+    const repair = await store.repair();
+
+    assert.equal(repair.issues.length, 1);
+    assert.equal(repair.issues[0]?.fileName, "listings.json");
+    assert.equal(repair.repairedFiles.length, 1);
+    assert.equal(repair.repairedFiles[0]?.fileName, "listings.json");
+    assert.match(repair.repairedFiles[0]?.backupPath ?? "", /listings\.json\.broken-/);
+
+    const repairedState = await store.load();
+    assert.deepEqual(repairedState.searches, [
+      {
+        marketplace: "danggeun",
+        query: "camera",
+        location: "Seoul",
+      },
+    ]);
+    assert.deepEqual(repairedState.listings, []);
+
+    const listingsFile = JSON.parse(await readFile(join(dataDir, "listings.json"), "utf8")) as unknown[];
+    assert.deepEqual(listingsFile, []);
   } finally {
     await rm(dataDir, { recursive: true, force: true });
   }

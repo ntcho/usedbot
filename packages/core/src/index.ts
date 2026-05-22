@@ -39,10 +39,61 @@ const PRICE_HISTORY_FILE = "price-history.json";
 const SALE_STATUS_HISTORY_FILE = "sale-status-history.json";
 const NOTIFICATION_DECISIONS_FILE = "notification-decisions.json";
 const NOTIFIABLE_CHANGES: readonly ListingChangeType[] = ["new", "price_changed"];
+const STATE_FILE_SHAPES = [
+  { fileName: META_FILE, expectedShape: "object" },
+  { fileName: SETTINGS_FILE, expectedShape: "object" },
+  { fileName: SEARCHES_FILE, expectedShape: "array" },
+  { fileName: LISTINGS_FILE, expectedShape: "array" },
+  { fileName: PRICE_HISTORY_FILE, expectedShape: "array" },
+  { fileName: SALE_STATUS_HISTORY_FILE, expectedShape: "array" },
+  { fileName: NOTIFICATION_DECISIONS_FILE, expectedShape: "array" },
+] as const;
+
+type StateFileShape = (typeof STATE_FILE_SHAPES)[number]["expectedShape"];
+
+export interface StateStoreIssue {
+  fileName: string;
+  message: string;
+}
+
+export interface StateStoreInspectionResult {
+  ok: boolean;
+  dataDir: string;
+  issues: StateStoreIssue[];
+}
+
+export interface StateStoreRepairFileResult {
+  fileName: string;
+  backupPath?: string;
+}
+
+export interface StateStoreRepairResult {
+  dataDir: string;
+  issues: StateStoreIssue[];
+  repairedFiles: StateStoreRepairFileResult[];
+  state: CoreStateSnapshot;
+}
+
+interface StateFileReadResult {
+  fileName: string;
+  filePath: string;
+  parsed?: unknown;
+  issue?: StateStoreIssue;
+}
 
 export interface PlainTextStateStoreOptions {
   dataDir?: string;
   defaultSettings?: Partial<CoreSettings>;
+}
+
+class StateStoreCorruptionError extends Error {
+  readonly inspection: StateStoreInspectionResult;
+
+  constructor(inspection: StateStoreInspectionResult) {
+    super(formatStateStoreCorruptionMessage(inspection));
+    this.name = "StateStoreCorruptionError";
+    this.inspection = inspection;
+  }
 }
 
 export class PlainTextStateStore {
@@ -56,61 +107,12 @@ export class PlainTextStateStore {
   }
 
   async load(): Promise<CoreStateSnapshot> {
-    await mkdir(this.dataDir, { recursive: true });
-
-    const state = createEmptyCoreState(this.#defaultSettings);
-    const [meta, settings, searches, listings, priceHistory, saleStatusHistory, notificationDecisions] = await Promise.all([
-      this.#readJson(META_FILE),
-      this.#readJson(SETTINGS_FILE),
-      this.#readJson(SEARCHES_FILE),
-      this.#readJson(LISTINGS_FILE),
-      this.#readJson(PRICE_HISTORY_FILE),
-      this.#readJson(SALE_STATUS_HISTORY_FILE),
-      this.#readJson(NOTIFICATION_DECISIONS_FILE),
-    ]);
-
-    if (isRecord(meta)) {
-      if (typeof meta.monitorCyclesCompleted === "number" && meta.monitorCyclesCompleted >= 0) {
-        state.meta.monitorCyclesCompleted = Math.floor(meta.monitorCyclesCompleted);
-      }
-      if (typeof meta.updatedAt === "string" && meta.updatedAt.trim()) {
-        state.meta.updatedAt = meta.updatedAt;
-      }
+    const scan = await this.#scanStateFiles();
+    if (!scan.inspection.ok) {
+      throw new StateStoreCorruptionError(scan.inspection);
     }
 
-    if (isRecord(settings)) {
-      state.settings = mergeCoreSettings(state.settings, settings as Partial<CoreSettings>);
-    }
-
-    if (Array.isArray(searches)) {
-      state.searches = searches.flatMap((search, index) => {
-        try {
-          return [normalizeStoredSearch(parseSearchRequest(search, `searches[${index}]`))];
-        } catch {
-          return [];
-        }
-      });
-    }
-
-    if (Array.isArray(listings)) {
-      state.listings = listings
-        .filter(isRecord)
-        .map((listing) => hydrateStoredListing(listing as unknown as StoredListing));
-    }
-
-    if (Array.isArray(priceHistory)) {
-      state.priceHistory = priceHistory.filter(isRecord) as unknown as PriceChangeRecord[];
-    }
-
-    if (Array.isArray(saleStatusHistory)) {
-      state.saleStatusHistory = saleStatusHistory.filter(isRecord) as unknown as SaleStatusChangeRecord[];
-    }
-
-    if (Array.isArray(notificationDecisions)) {
-      state.notificationDecisions = notificationDecisions.filter(isRecord) as unknown as NotificationDecision[];
-    }
-
-    return state;
+    return scan.state;
   }
 
   async save(snapshot: CoreStateSnapshot): Promise<void> {
@@ -122,17 +124,35 @@ export class PlainTextStateStore {
     return this.#writeChain;
   }
 
-  async #readJson(fileName: string): Promise<unknown | undefined> {
-    try {
-      const filePath = join(this.dataDir, fileName);
-      return JSON.parse(await readFile(filePath, "utf8")) as unknown;
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") {
-        return undefined;
+  async inspect(): Promise<StateStoreInspectionResult> {
+    return (await this.#scanStateFiles()).inspection;
+  }
+
+  async repair(): Promise<StateStoreRepairResult> {
+    const scan = await this.#scanStateFiles();
+    const repairedFiles: StateStoreRepairFileResult[] = [];
+
+    for (const file of scan.files) {
+      if (file.issue === undefined) {
+        continue;
       }
 
-      return undefined;
+      repairedFiles.push({
+        fileName: file.fileName,
+        backupPath: await backupBrokenStateFile(file.filePath),
+      });
     }
+
+    if (repairedFiles.length > 0) {
+      await this.#writeSnapshot(scan.state);
+    }
+
+    return {
+      dataDir: this.dataDir,
+      issues: scan.inspection.issues,
+      repairedFiles,
+      state: structuredClone(scan.state),
+    };
   }
 
   async #writeSnapshot(snapshot: CoreStateSnapshot): Promise<void> {
@@ -148,6 +168,130 @@ export class PlainTextStateStore {
     await writeJsonAtomic(join(this.dataDir, PRICE_HISTORY_FILE), normalized.priceHistory);
     await writeJsonAtomic(join(this.dataDir, SALE_STATUS_HISTORY_FILE), normalized.saleStatusHistory);
     await writeJsonAtomic(join(this.dataDir, NOTIFICATION_DECISIONS_FILE), normalized.notificationDecisions);
+  }
+
+  async #scanStateFiles(): Promise<{
+    inspection: StateStoreInspectionResult;
+    state: CoreStateSnapshot;
+    files: StateFileReadResult[];
+  }> {
+    await mkdir(this.dataDir, { recursive: true });
+
+    const files = await Promise.all(
+      STATE_FILE_SHAPES.map(({ fileName, expectedShape }) => this.#readStateFile(fileName, expectedShape)),
+    );
+    const issues = files.flatMap((file) => (file.issue === undefined ? [] : [file.issue]));
+
+    return {
+      inspection: {
+        ok: issues.length === 0,
+        dataDir: this.dataDir,
+        issues,
+      },
+      state: this.#hydrateState(files),
+      files,
+    };
+  }
+
+  async #readStateFile(fileName: string, expectedShape: StateFileShape): Promise<StateFileReadResult> {
+    const filePath = join(this.dataDir, fileName);
+
+    let raw: string;
+    try {
+      raw = await readFile(filePath, "utf8");
+    } catch (error) {
+      if (isErrnoException(error) && error.code === "ENOENT") {
+        return { fileName, filePath };
+      }
+
+      throw error;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw) as unknown;
+    } catch {
+      return {
+        fileName,
+        filePath,
+        issue: {
+          fileName,
+          message: `Invalid JSON prevented the ${fileName} file from loading.`,
+        },
+      };
+    }
+
+    if (expectedShape === "object" ? !isRecord(parsed) : !Array.isArray(parsed)) {
+      return {
+        fileName,
+        filePath,
+        issue: {
+          fileName,
+          message: `${fileName} must contain a top-level ${expectedShape}.`,
+        },
+      };
+    }
+
+    return {
+      fileName,
+      filePath,
+      parsed,
+    };
+  }
+
+  #hydrateState(files: StateFileReadResult[]): CoreStateSnapshot {
+    const state = createEmptyCoreState(this.#defaultSettings);
+    const values = new Map(files.map((file) => [file.fileName, file.issue === undefined ? file.parsed : undefined]));
+
+    const meta = values.get(META_FILE);
+    if (isRecord(meta)) {
+      if (typeof meta.monitorCyclesCompleted === "number" && meta.monitorCyclesCompleted >= 0) {
+        state.meta.monitorCyclesCompleted = Math.floor(meta.monitorCyclesCompleted);
+      }
+      if (typeof meta.updatedAt === "string" && meta.updatedAt.trim()) {
+        state.meta.updatedAt = meta.updatedAt;
+      }
+    }
+
+    const settings = values.get(SETTINGS_FILE);
+    if (isRecord(settings)) {
+      state.settings = mergeCoreSettings(state.settings, settings as Partial<CoreSettings>);
+    }
+
+    const searches = values.get(SEARCHES_FILE);
+    if (Array.isArray(searches)) {
+      state.searches = searches.flatMap((search, index) => {
+        try {
+          return [normalizeStoredSearch(parseSearchRequest(search, `searches[${index}]`))];
+        } catch {
+          return [];
+        }
+      });
+    }
+
+    const listings = values.get(LISTINGS_FILE);
+    if (Array.isArray(listings)) {
+      state.listings = listings
+        .filter(isRecord)
+        .map((listing) => hydrateStoredListing(listing as unknown as StoredListing));
+    }
+
+    const priceHistory = values.get(PRICE_HISTORY_FILE);
+    if (Array.isArray(priceHistory)) {
+      state.priceHistory = priceHistory.filter(isRecord) as unknown as PriceChangeRecord[];
+    }
+
+    const saleStatusHistory = values.get(SALE_STATUS_HISTORY_FILE);
+    if (Array.isArray(saleStatusHistory)) {
+      state.saleStatusHistory = saleStatusHistory.filter(isRecord) as unknown as SaleStatusChangeRecord[];
+    }
+
+    const notificationDecisions = values.get(NOTIFICATION_DECISIONS_FILE);
+    if (Array.isArray(notificationDecisions)) {
+      state.notificationDecisions = notificationDecisions.filter(isRecord) as unknown as NotificationDecision[];
+    }
+
+    return state;
   }
 }
 
@@ -169,6 +313,16 @@ export class CoreEngine {
 
   async getState(): Promise<CoreStateSnapshot> {
     return structuredClone(await this.#ensureState());
+  }
+
+  async inspectStorage(): Promise<StateStoreInspectionResult> {
+    return this.#store.inspect();
+  }
+
+  async repairStorage(): Promise<StateStoreRepairResult> {
+    const result = await this.#store.repair();
+    this.#state = structuredClone(result.state);
+    return result;
   }
 
   async updateSettings(updates: Partial<CoreSettings>): Promise<CoreStateSnapshot> {
@@ -615,6 +769,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+function formatStateStoreCorruptionMessage(inspection: StateStoreInspectionResult): string {
+  return [
+    `Local data in ${inspection.dataDir} needs repair before usedbot can continue.`,
+    ...inspection.issues.map((issue) => `- ${issue.fileName}: ${issue.message}`),
+    "Run `pnpm usedbot data repair` to back up broken files and rebuild the supported state files.",
+  ].join("\n");
+}
+
+async function backupBrokenStateFile(filePath: string): Promise<string> {
+  const backupPath = `${filePath}.broken-${nowTimestamp().replaceAll(":", "-").replaceAll(".", "-")}`;
+  await rename(filePath, backupPath);
+  return backupPath;
 }
 
 async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {

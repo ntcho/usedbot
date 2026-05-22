@@ -11,6 +11,7 @@ import {
   type CliRuntime,
   type SidecarManager,
 } from "./index.js";
+import type { StateStoreInspectionResult, StateStoreRepairResult } from "../../../packages/core/src/index.js";
 import {
   createCoreSettings,
   createEmptyCoreState,
@@ -27,6 +28,19 @@ class FakeEngine implements CliCoreEngine {
   readonly removeSearchCalls: SearchRequest[] = [];
   readonly updateSettingsCalls: Partial<CoreStateSnapshot["settings"]>[] = [];
   readonly runConfiguredCalls: Array<{ headed?: boolean }> = [];
+  inspectStorageCalls = 0;
+  repairStorageCalls = 0;
+  storageInspection: StateStoreInspectionResult = {
+    ok: true,
+    dataDir: "/tmp/usedbot-data",
+    issues: [],
+  };
+  storageRepair: StateStoreRepairResult = {
+    dataDir: "/tmp/usedbot-data",
+    issues: [],
+    repairedFiles: [],
+    state: createEmptyCoreState(),
+  };
   monitorResult: MonitorCycleResult = {
     firstCycle: true,
     startedAt: "2026-05-22T00:00:00.000Z",
@@ -68,6 +82,16 @@ class FakeEngine implements CliCoreEngine {
   async runConfiguredMonitorCycle(options: { headed?: boolean } = {}): Promise<MonitorCycleResult> {
     this.runConfiguredCalls.push(options);
     return this.monitorResult;
+  }
+
+  async inspectStorage(): Promise<StateStoreInspectionResult> {
+    this.inspectStorageCalls += 1;
+    return this.storageInspection;
+  }
+
+  async repairStorage(): Promise<StateStoreRepairResult> {
+    this.repairStorageCalls += 1;
+    return this.storageRepair;
   }
 }
 
@@ -263,6 +287,64 @@ test("local sidecar manager includes stderr when startup exits early", async () 
     () => manager.ensureAvailable(),
     (error) => error instanceof Error && error.message.includes("missing playwright"),
   );
+});
+
+test("doctor reports storage and sidecar diagnostics", async () => {
+  const engine = new FakeEngine();
+  const sidecar = new FakeSidecarManager();
+  sidecar.health = {
+    status: "ok",
+    started: true,
+    capabilities: [
+      {
+        marketplace: "danggeun",
+        available: false,
+        supportsSearch: true,
+        supportsEnrich: true,
+        started: false,
+        reason: "missing playwright browsers",
+      },
+    ],
+  };
+  const { runtime, stdout } = createRuntime(engine, sidecar);
+
+  const exitCode = await runCli(["doctor"], runtime);
+
+  assert.equal(exitCode, 1);
+  assert.equal(engine.inspectStorageCalls, 1);
+  assert.equal(sidecar.ensureCalls, 1);
+  assert.match(stdout.join("\n"), /Doctor report/);
+  assert.match(stdout.join("\n"), /missing playwright browsers/);
+});
+
+test("data repair delegates to core maintenance workflow", async () => {
+  const engine = new FakeEngine();
+  engine.storageRepair = {
+    dataDir: "/tmp/usedbot-data",
+    issues: [
+      {
+        fileName: "listings.json",
+        message: "Invalid JSON prevented the listings file from loading.",
+      },
+    ],
+    repairedFiles: [
+      {
+        fileName: "listings.json",
+        backupPath: "/tmp/usedbot-data/listings.json.broken-2026-05-22T00-00-00-000Z",
+      },
+    ],
+    state: createEmptyCoreState(),
+  };
+  const sidecar = new FakeSidecarManager();
+  const { runtime, stdout } = createRuntime(engine, sidecar);
+
+  const exitCode = await runCli(["data", "repair"], runtime);
+
+  assert.equal(exitCode, 0);
+  assert.equal(engine.repairStorageCalls, 1);
+  assert.equal(sidecar.ensureCalls, 0);
+  assert.match(stdout.join("\n"), /listings\.json/);
+  assert.match(stdout.join("\n"), /broken-2026-05-22T00-00-00-000Z/);
 });
 
 function createRuntime(engine: FakeEngine, sidecarManager: FakeSidecarManager): {
