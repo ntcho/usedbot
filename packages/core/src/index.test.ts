@@ -1,0 +1,222 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import test from "node:test";
+
+import { PlainTextStateStore, createCoreEngine } from "@usedbot/core";
+import type { ScraperClient } from "@usedbot/scraper-client";
+import type { CapabilitiesResponse, EnrichRequest, EnrichResponse, HealthResponse, SearchRequest, SearchResponse } from "@usedbot/shared";
+
+class FakeScraperClient implements ScraperClient {
+  readonly requests: SearchRequest[] = [];
+  readonly #responses: SearchResponse[];
+  #index = 0;
+
+  constructor(responses: SearchResponse[]) {
+    this.#responses = responses;
+  }
+
+  async health(): Promise<HealthResponse> {
+    return {
+      status: "ok",
+      started: true,
+      capabilities: [],
+    };
+  }
+
+  async capabilities(): Promise<CapabilitiesResponse> {
+    return { capabilities: [] };
+  }
+
+  async search(request: SearchRequest): Promise<SearchResponse> {
+    this.requests.push(request);
+    const response = this.#responses[this.#index];
+    this.#index += 1;
+
+    return (
+      response ?? {
+        ok: true,
+        marketplace: request.marketplace,
+        listings: [],
+      }
+    );
+  }
+
+  async enrich(_request: EnrichRequest): Promise<EnrichResponse> {
+    return { ok: false };
+  }
+}
+
+test("core dedupes listings, updates by normalized link, and records notification eligibility", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-"));
+
+  try {
+    const client = new FakeScraperClient([
+      {
+        ok: true,
+        marketplace: "danggeun",
+        listings: [
+          {
+            marketplace: "danggeun",
+            articleId: "a1",
+            title: "Used Camera",
+            priceText: "100,000원",
+            link: "HTTPS://example.com/items/1/?utm_source=test&b=2&a=1#frag",
+            query: "camera",
+            seller: "alice",
+            location: "Seoul",
+            priceValue: 100000,
+          },
+          {
+            marketplace: "danggeun",
+            articleId: "a1",
+            title: "Used Camera Duplicate",
+            priceText: "100,000원",
+            link: "https://example.com/items/1?b=2&a=1",
+            query: "camera",
+            priceValue: 100000,
+          },
+          {
+            marketplace: "danggeun",
+            articleId: "hash-new",
+            title: "Used Camera URL Duplicate",
+            priceText: "90,000원",
+            link: "https://example.com/items/1?a=1&b=2",
+            query: "camera",
+            priceValue: 90000,
+          },
+          {
+            marketplace: "danggeun",
+            articleId: "speaker-1",
+            title: "Vintage Speaker",
+            priceText: "55,000원",
+            link: "https://example.com/items/2",
+            query: "speaker",
+            priceValue: 55000,
+          },
+        ],
+      },
+      {
+        ok: true,
+        marketplace: "danggeun",
+        listings: [
+          {
+            marketplace: "danggeun",
+            articleId: "hash-new",
+            title: "Used Camera 예약중",
+            priceText: "90,000원",
+            link: "https://example.com/items/1?a=1&b=2",
+            query: "new-camera-query",
+            seller: "",
+            location: "",
+            priceValue: 90000,
+          },
+        ],
+      },
+    ]);
+
+    const store = new PlainTextStateStore({
+      dataDir,
+      defaultSettings: {
+        notificationsEnabled: true,
+        channels: {
+          terminal: { enabled: true },
+          webhook: { enabled: true, url: "https://example.test/hook" },
+        },
+      },
+    });
+
+    const engine = createCoreEngine({ scraperClient: client, store });
+
+    const firstCycle = await engine.runMonitorCycle([{ marketplace: "danggeun", query: "camera" }]);
+    assert.equal(firstCycle.firstCycle, true);
+    assert.equal(firstCycle.processedListings.length, 2);
+    assert.equal(firstCycle.state.listings.length, 2);
+    assert.ok(
+      firstCycle.processedListings
+        .flatMap((result) => result.notificationDecisions)
+        .every((decision) => decision.status === "skipped_first_cycle"),
+    );
+
+    const secondCycle = await engine.runMonitorCycle([{ marketplace: "danggeun", query: "camera" }]);
+    assert.equal(secondCycle.firstCycle, false);
+    assert.equal(secondCycle.state.listings.length, 2);
+    assert.equal(secondCycle.state.priceHistory.length, 1);
+    assert.equal(secondCycle.state.saleStatusHistory.length, 1);
+
+    const updatedListing = secondCycle.state.listings.find((listing) => listing.articleId === "a1");
+    assert.ok(updatedListing);
+    assert.equal(updatedListing?.query, "camera");
+    assert.equal(updatedListing?.priceText, "90,000원");
+    assert.equal(updatedListing?.saleStatus, "reserved");
+    assert.equal(updatedListing?.seller, "alice");
+    assert.equal(updatedListing?.location, "Seoul");
+    assert.equal(updatedListing?.normalizedLink, "https://example.com/items/1?a=1&b=2");
+
+    const priceChangeResult = secondCycle.processedListings[0];
+    assert.equal(priceChangeResult?.changeType, "price_changed");
+    assert.deepEqual(
+      priceChangeResult?.notificationDecisions.map((decision) => ({ channel: decision.channel, status: decision.status })),
+      [
+        { channel: "terminal", status: "eligible" },
+        { channel: "webhook", status: "eligible" },
+      ],
+    );
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("plain text storage reloads persisted state from repo-local files", async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), "usedbot-core-store-"));
+
+  try {
+    const initialStore = new PlainTextStateStore({
+      dataDir,
+      defaultSettings: {
+        notificationsEnabled: false,
+      },
+    });
+
+    const initialEngine = createCoreEngine({
+      scraperClient: new FakeScraperClient([
+        {
+          ok: true,
+          marketplace: "bunjang",
+          listings: [
+            {
+              marketplace: "bunjang",
+              articleId: "b1",
+              title: "Phone",
+              priceText: "800,000원",
+              link: "https://example.com/products/1?utm_medium=test",
+              query: "phone",
+              priceValue: 800000,
+            },
+          ],
+        },
+      ]),
+      store: initialStore,
+    });
+
+    await initialEngine.runMonitorCycle([{ marketplace: "bunjang", query: "phone" }]);
+
+    const recoveredEngine = createCoreEngine({
+      scraperClient: new FakeScraperClient([]),
+      store: new PlainTextStateStore({ dataDir }),
+    });
+
+    const recoveredState = await recoveredEngine.getState();
+    assert.equal(recoveredState.meta.monitorCyclesCompleted, 1);
+    assert.equal(recoveredState.listings.length, 1);
+    assert.equal(recoveredState.listings[0]?.articleId, "b1");
+    assert.equal(recoveredState.listings[0]?.normalizedLink, "https://example.com/products/1");
+
+    const listingsFile = JSON.parse(await readFile(join(dataDir, "listings.json"), "utf8")) as Array<{ articleId: string }>;
+    assert.equal(listingsFile.length, 1);
+    assert.equal(listingsFile[0]?.articleId, "b1");
+  } finally {
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
