@@ -1,5 +1,7 @@
 # Upstream Sync Workflow
 
+Use `README.md` for local setup, `docs/ARCHITECTURE.md` for system boundaries, and `docs/local-toolchain.md` for day-to-day operator workflows. This document only covers maintaining the vendored upstream tree.
+
 ## Default Branch Check
 
 Inspect the upstream default branch before assuming `main`.
@@ -45,3 +47,9 @@ git subtree pull --prefix=vendor/used-market-notifier upstream main --squash
 ```
 
 Use the actual upstream default branch if it is not `main`.
+
+## Related Docs
+
+- Patch policy: `docs/upstream-patches.md`
+- System boundaries: `docs/ARCHITECTURE.md`
+- Local workflows: `docs/local-toolchain.md`

@@ -1,7 +1,7 @@
 # v1-local-toolchain-hardening Specification
 
 ## Purpose
-TBD - created by archiving change harden-v1-local-toolchain. Update Purpose after archive.
+Defines the diagnostics, repair workflows, and operational documentation that keep the local usedbot toolchain usable on a developer machine.
 ## Requirements
 ### Requirement: Local data recovery is supported
 The v1 toolchain SHALL provide recovery or repair behavior for expected local plain text data failure modes.
@@ -29,7 +29,7 @@ The v1 toolchain SHALL document common run, debug, recovery, and upstream sync w
 
 #### Scenario: Developer needs operational guidance
 - **WHEN** a developer reads the operational documentation
-- **THEN** they can find guidance for running v1, debugging sidecar issues, recovering local data, and syncing upstream
+- **THEN** they can find guidance for running usedbot locally, debugging sidecar issues, recovering local data, and syncing upstream
 
 ### Requirement: Hardening does not expand product scope
 The hardening change SHALL NOT introduce major new product surfaces beyond reliability, diagnostics, maintenance, and documentation.
@@ -37,4 +37,3 @@ The hardening change SHALL NOT introduce major new product surfaces beyond relia
 #### Scenario: Hardening is complete
 - **WHEN** the hardening change is implemented
 - **THEN** it does not add a browser frontend, hosted service mode, or unsupported notification channels
-

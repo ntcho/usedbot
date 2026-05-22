@@ -1,105 +1,128 @@
 # Local Toolchain Workflows
 
-## Normal Run Workflow
+Use `README.md` for clean-machine setup and `docs/ARCHITECTURE.md` for system ownership. This document covers recurring workflows after the repository is already installed.
 
-Install the Node and Python dependencies first.
+## Daily CLI Workflow
 
-```bash
-pnpm install
-cd services/scraper-sidecar
-uv sync
-uv run playwright install
-```
-
-Return to the repository root after the Python setup.
-
-```bash
-cd ../..
-```
-
-Check the local toolchain state.
+1. Confirm the local state and sidecar are healthy.
 
 ```bash
 pnpm usedbot doctor
 ```
 
-Add one or more searches.
+2. Review or add saved searches.
 
 ```bash
+pnpm usedbot config search list
 pnpm usedbot config search add --marketplace danggeun --query "camera"
-pnpm usedbot config search add --marketplace bunjang --query "speaker"
 ```
 
-Run the configured monitor cycle.
+3. Run a monitor cycle.
 
 ```bash
 pnpm usedbot monitor run
 ```
 
-Inspect the most recent stored results.
+4. Review recent stored results.
 
 ```bash
 pnpm usedbot results list --limit 10
 ```
 
+## Configuration and Notification Checks
+
+Show the current saved searches and notification settings:
+
+```bash
+pnpm usedbot config show
+```
+
+Update notification settings:
+
+```bash
+pnpm usedbot config notifications set --enabled true --terminal true --webhook false
+```
+
+Send test notifications:
+
+```bash
+pnpm usedbot notify test terminal --message "usedbot test notification"
+pnpm usedbot notify test webhook --url "https://example.test/hook"
+```
+
 ## Sidecar Debug Workflow
 
-Use the doctor command first when scraper startup or availability is unclear.
+Start with the doctor command whenever scraper availability is unclear.
 
 ```bash
 pnpm usedbot doctor
 ```
 
-If the sidecar reports missing Playwright browsers, install them from the sidecar workspace.
+Run a headed scrape when you need to watch the browser session.
+
+```bash
+pnpm usedbot monitor run --headed
+```
+
+If you need to run the sidecar manually, start it from its workspace:
+
+```bash
+cd services/scraper-sidecar
+uv run scraper-sidecar
+```
+
+If the sidecar reports missing browser support, reinstall the Playwright browsers:
 
 ```bash
 cd services/scraper-sidecar
 uv run playwright install
 ```
 
-Run a headed scrape when you need to see the browser session.
-
-```bash
-pnpm usedbot monitor run --headed
-```
-
 The CLI only auto-starts sidecars on loopback addresses. If `USEDBOT_SCRAPER_BASE_URL` points at a non-local host, start that sidecar yourself before running monitor commands.
+
+Useful runtime variables:
+
+- `USEDBOT_SCRAPER_BASE_URL`
+- `USEDBOT_DATA_DIR`
+- `USEDBOT_SIDECAR_STARTUP_TIMEOUT_MS`
+- `SCRAPER_SIDECAR_LOG_LEVEL`
 
 ## Local Data Recovery Workflow
 
-Repo-local v1 state lives under `data/core/` by default.
+Repo-local state lives under `data/core/` by default.
 
-Run the doctor command to detect supported state issues.
+Run the doctor command to detect supported state issues:
 
 ```bash
 pnpm usedbot doctor
 ```
 
-The hardening workflow currently repairs these supported file-level issues:
+The current repair workflow handles invalid JSON and wrong top-level JSON shapes in the supported state files.
 
-- invalid JSON in a state file
-- wrong top-level JSON shape for a state file
-
-Repair the data when doctor reports that recovery is needed.
+Repair the data when doctor reports that recovery is needed:
 
 ```bash
 pnpm usedbot data repair
 ```
 
-`data repair` moves each broken file to `*.broken-<timestamp>` before rewriting the supported state files from the remaining valid data.
+`data repair` moves each broken file to `*.broken-<timestamp>` before rewriting supported state from the remaining valid data.
 
-Run doctor again after repair to confirm the toolchain is healthy.
+Run doctor again after repair:
 
 ```bash
 pnpm usedbot doctor
 ```
 
-## Maintenance Notes
+## Vendor Maintenance
 
-- Missing state files are recreated automatically on the next successful write.
-- `USEDBOT_DATA_DIR` can point the CLI at a different repo-local data directory.
-- `USEDBOT_SIDECAR_STARTUP_TIMEOUT_MS` can extend the local sidecar startup wait during debugging.
+Vendor maintenance is a separate workflow from daily usedbot operation.
 
-## Upstream Sync Boundary
+- Use `docs/upstream-sync.md` for subtree sync commands.
+- Use `docs/upstream-patches.md` for the vendor patch policy and patch log.
 
-This hardening change does not alter the upstream sync or vendor patch workflow. Continue using `docs/upstream-sync.md` and `docs/upstream-patches.md` for vendor maintenance.
+## Related Docs
+
+- Setup and first run: `README.md`
+- System boundaries and runtime flow: `docs/ARCHITECTURE.md`
+- Vendor sync: `docs/upstream-sync.md`
+- Vendor patch policy: `docs/upstream-patches.md`

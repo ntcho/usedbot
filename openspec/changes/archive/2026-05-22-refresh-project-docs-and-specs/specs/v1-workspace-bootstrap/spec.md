@@ -1,9 +1,5 @@
-# v1-workspace-bootstrap Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Defines the root-level metadata, runtime baselines, and documentation guardrails required for the active local usedbot workspace.
-## Requirements
 ### Requirement: Root workspace docs and metadata exist
 The repository SHALL include the root documentation and workspace metadata needed to identify, set up, and operate the implemented local v1 workspace.
 
@@ -28,22 +24,3 @@ The repository SHALL record durable v1 architecture and boundary decisions in li
 #### Scenario: Future implementation boundaries are visible
 - **WHEN** a developer reads the root README, architecture document, or current OpenSpec specs
 - **THEN** they can find the current boundaries for Python scraping, TypeScript product logic, CLI behavior, repo-local data, notification channels, vendor isolation, and local toolchain expectations
-
-### Requirement: Active root excludes legacy desktop app files
-
-The repository SHALL NOT recreate legacy upstream desktop application files at the active root layout.
-
-#### Scenario: Forbidden legacy files are absent from active root
-
-- **WHEN** a developer inspects the active repository root outside `vendor/used-market-notifier/`
-- **THEN** paths such as `main.py`, `monitor_engine.py`, `db.py`, `settings_manager.py`, `gui/`, `notifiers/`, `scrapers/`, `legacy/`, and `used_market_notifier.spec` do not exist
-
-### Requirement: V2 frontend files are excluded
-
-The repository SHALL NOT create v2 frontend files or directories in the active v1 workspace.
-
-#### Scenario: V2 app is absent
-
-- **WHEN** a developer inspects the repository layout
-- **THEN** `apps/web/`, SolidJS application files, frontend component library files, and browser-only API implementation files are absent
-

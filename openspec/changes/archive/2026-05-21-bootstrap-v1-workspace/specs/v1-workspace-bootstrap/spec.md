@@ -11,12 +11,12 @@ The repository SHALL include the root files needed to identify and operate the v
 - **WHEN** the bootstrap change is implemented on a POSIX-compatible filesystem
 - **THEN** `scripts/sync-upstream.sh` is executable
 
-### Requirement: Workspace uses Node 22 and pnpm
-The repository SHALL define Node 22 as the v1 TypeScript runtime baseline and pnpm as the workspace package manager.
+### Requirement: Workspace uses Node 24 and pnpm
+The repository SHALL define Node 24 as the v1 TypeScript runtime baseline and pnpm as the workspace package manager.
 
 #### Scenario: Runtime baseline is documented
 - **WHEN** a developer reads the root workspace metadata or migration documentation
-- **THEN** Node 22 is identified as the required Node runtime baseline
+- **THEN** Node 24 is identified as the required Node runtime baseline
 
 #### Scenario: pnpm workspace is configured
 - **WHEN** a developer inspects `pnpm-workspace.yaml`

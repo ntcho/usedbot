@@ -1,10 +1,10 @@
 # command-cli Specification
 
 ## Purpose
-TBD - created by archiving change add-command-cli. Update Purpose after archive.
+Defines the command-only operator interface that configures searches, diagnoses the local toolchain, runs monitor cycles, and surfaces stored results.
 ## Requirements
 ### Requirement: CLI provides command-only v1 interface
-The CLI SHALL expose v1 behavior through commands rather than a TUI or browser frontend.
+The CLI SHALL expose usedbot behavior through commands rather than a TUI or browser frontend.
 
 #### Scenario: User invokes CLI
 - **WHEN** a user runs a supported CLI command
@@ -37,4 +37,3 @@ The CLI change SHALL NOT create browser frontend or TUI implementation files.
 #### Scenario: CLI is implemented
 - **WHEN** the CLI change is complete
 - **THEN** it remains command-only and does not create `apps/web/` or TUI screens
-

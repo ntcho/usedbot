@@ -1,7 +1,7 @@
 # typescript-core-engine Specification
 
 ## Purpose
-TBD - created by archiving change add-typescript-core-engine. Update Purpose after archive.
+Defines the TypeScript core that owns repo-local state, monitor orchestration, listing identity, and notification eligibility.
 ## Requirements
 ### Requirement: Core orchestrates monitoring
 The TypeScript core SHALL own monitor cycle orchestration and SHALL request scraping through the local scraper-client boundary.
@@ -35,6 +35,5 @@ The TypeScript core SHALL decide whether a listing event is eligible for termina
 The TypeScript core SHALL expose behavior that a CLI can invoke without owning terminal command parsing or interactive UI behavior.
 
 #### Scenario: CLI uses core
-- **WHEN** a later CLI command invokes monitoring behavior
+- **WHEN** a CLI command invokes monitoring behavior
 - **THEN** command parsing remains outside the core engine
-

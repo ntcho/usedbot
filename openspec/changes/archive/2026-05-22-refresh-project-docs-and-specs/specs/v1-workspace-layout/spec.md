@@ -1,9 +1,5 @@
-# v1-workspace-layout Specification
+## MODIFIED Requirements
 
-## Purpose
-
-Defines the active workspace areas and repository guardrails for the implemented local usedbot layout.
-## Requirements
 ### Requirement: Active v1 workspace areas exist
 The repository SHALL provide active workspace areas for the CLI, TypeScript packages, and Python scraper sidecar outside the vendored upstream tree.
 
@@ -24,4 +20,3 @@ The workspace layout SHALL keep new v1 code and documentation outside the upstre
 #### Scenario: Vendor mirror is not used for new product code
 - **WHEN** developers add or update active v1 workspaces and docs
 - **THEN** those changes are outside `vendor/used-market-notifier/` unless an intentional vendor patch is documented
-

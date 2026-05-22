@@ -1,7 +1,7 @@
 # python-scraper-sidecar Specification
 
 ## Purpose
-TBD - created by archiving change add-python-scraper-sidecar. Update Purpose after archive.
+Defines the local-only Python HTTP boundary that adapts vendored upstream scrapers into stable DTOs for local TypeScript clients.
 ## Requirements
 ### Requirement: Sidecar is local-only
 The Python scraper sidecar SHALL be designed for local application use and SHALL NOT expose scraping behavior as a public network service.
@@ -37,4 +37,3 @@ The Python scraper sidecar SHALL NOT own scheduling, dedupe, persistence, notifi
 #### Scenario: Scraping completes
 - **WHEN** the sidecar returns scraping results
 - **THEN** it does not persist listing state, decide notification eligibility, or schedule future searches
-

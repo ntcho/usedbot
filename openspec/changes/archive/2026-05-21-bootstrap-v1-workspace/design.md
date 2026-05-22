@@ -41,11 +41,11 @@ New product code must not be built inside `vendor/used-market-notifier/`. If an 
 
 Alternative considered: wrapper-only workarounds. Wrapper-only workarounds keep vendor pristine but can become more complex than a small documented patch when upstream imports or scraper behavior require adaptation.
 
-### Establish Node 22 For V1 Tooling
+### Establish Node 24 For V1 Tooling
 
-The workspace baseline will target Node 22. The current plan does not require Node 24-only features, so Node 22 gives a stable LTS baseline for the TypeScript packages and CLI.
+The workspace baseline will target Node 24 so the TypeScript packages and CLI match the current repository runtime requirement.
 
-Alternative considered: Node 24. It can be revisited later if a concrete dependency or platform feature requires it.
+Alternative considered: keep the previous Node baseline. Rejected because the repository now enforces Node 24 in workspace metadata.
 
 ### Establish `uv` As The Future Python Tooling Direction
 

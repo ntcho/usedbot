@@ -13,7 +13,7 @@
     "usedbot": "tsx apps/cli/src/index.ts"
   },
   "devDependencies": {
-    "@types/node": "^22.15.3",
+    "@types/node": "^24.0.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.3"
   }

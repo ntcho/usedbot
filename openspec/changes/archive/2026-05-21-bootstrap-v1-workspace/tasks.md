@@ -2,7 +2,7 @@
 
 - [x] 1.1 Inspect the current worktree and existing remotes before changing files.
 - [x] 1.2 Create `migration.md` with the reviewed v1 migration plan and recorded decisions.
-- [x] 1.3 Create root `package.json` with private workspace metadata, pnpm package manager metadata, and Node 22 engine constraints.
+- [x] 1.3 Create root `package.json` with private workspace metadata, pnpm package manager metadata, and Node 24 engine constraints.
 - [x] 1.4 Create `pnpm-workspace.yaml` including future `apps/*` and `packages/*` workspaces.
 - [x] 1.5 Create `.gitignore` entries for dependencies, build output, Python caches, virtual environments, local runtime `data/`, logs, and editor/system files.
 
